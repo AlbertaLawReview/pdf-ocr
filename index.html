@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>PDF OCR Viewer (Left Column Only, Parallel)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
   <style>
     body { margin: 0; font-family: sans-serif; }
     header { padding: 1em; background: #2d7dd2; color: white; }
@@ -40,20 +39,19 @@
     <div id="canvasColumn"><p>🖼 PDF pages (left side only) will appear here.</p></div>
   </div>
 
-  <script>
+  <script type="module">
+    import { createWorker } from 'https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/+esm';
+
     const pdfjsLib = window['pdfjs-dist/build/pdf'];
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     const fileInput = document.getElementById('fileInput');
     const textColumn = document.getElementById('textColumn');
     const canvasColumn = document.getElementById('canvasColumn');
-
     const NUM_WORKERS = 4;
 
     async function createOCRWorker() {
-      const worker = Tesseract.createWorker({
-        logger: m => console.log("[Worker]", m)
-      });
+      const worker = createWorker({ logger: m => console.log("[Worker]", m) });
       await worker.load();
       await worker.loadLanguage('eng');
       await worker.initialize('eng');
@@ -97,16 +95,16 @@
         textColumn.innerHTML = "";
         canvasColumn.innerHTML = "";
 
-        const pagePromises = [];
+        const pages = [];
         for (let i = 1; i <= pdf.numPages; i++) {
-          pagePromises.push(pdf.getPage(i));
+          pages.push(pdf.getPage(i));
         }
 
         const workers = await Promise.all(
           Array.from({ length: NUM_WORKERS }, () => createOCRWorker())
         );
 
-        const renderedPages = await Promise.all((await Promise.all(pagePromises)).map(renderLeftHalf));
+        const renderedPages = await Promise.all((await Promise.all(pages)).map(renderLeftHalf));
 
         const ocrJobs = renderedPages.map((pageObj, index) => {
           const worker = workers[index % workers.length];
@@ -127,7 +125,7 @@
           textColumn.appendChild(pre);
         });
 
-        textColumn.insertAdjacentHTML('beforeend', '<p><strong>✅ OCR complete (left column only).</strong></p>');
+        textColumn.insertAdjacentHTML('beforeend', '<p><strong>✅ OCR complete.</strong></p>');
 
         for (const w of workers) await w.terminate();
       };
@@ -143,7 +141,6 @@
       }
     });
 
-    // Drag and drop support
     document.body.addEventListener('dragover', (e) => {
       e.preventDefault();
       document.body.classList.add('drop-zone-active');
