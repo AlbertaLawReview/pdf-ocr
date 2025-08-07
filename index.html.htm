@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF OCR Viewer (Left Column Only, Parallel)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    header { padding: 1em; background: #2d7dd2; color: white; }
+    #fileInput { margin-top: 10px; }
+    #main { display: flex; height: 90vh; }
+    #textColumn {
+      width: 40%; padding: 1em; overflow-y: scroll;
+      border-right: 2px solid #ccc; background: #f9f9f9;
+    }
+    #textColumn pre {
+      white-space: pre-wrap; background: #fff;
+      border-left: 4px solid #2d7dd2; padding: 0.5em;
+      margin-bottom: 1em; font-family: monospace;
+    }
+    #canvasColumn {
+      flex: 1; padding: 1em; overflow-y: scroll; background: #fafafa;
+    }
+    canvas {
+      display: block; margin-bottom: 1em; border: 1px solid #ccc;
+    }
+    .drop-zone-active { background-color: #e0f7fa !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>⚡ PDF OCR Viewer (Left Column Only, Parallel)</h2>
+    <input type="file" id="fileInput" accept="application/pdf" />
+    <p>Or drag-and-drop a PDF anywhere on the page</p>
+  </header>
+
+  <div id="main">
+    <div id="textColumn"><p>📋 OCR output will appear here.</p></div>
+    <div id="canvasColumn"><p>🖼 PDF pages (left side only) will appear here.</p></div>
+  </div>
+
+  <script>
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const fileInput = document.getElementById('fileInput');
+    const textColumn = document.getElementById('textColumn');
+    const canvasColumn = document.getElementById('canvasColumn');
+
+    const NUM_WORKERS = 4;
+
+    async function createOCRWorker() {
+      const worker = Tesseract.createWorker({
+        logger: m => console.log("[Worker]", m)
+      });
+      await worker.load();
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+      return worker;
+    }
+
+    function renderLeftHalf(page) {
+      return new Promise(async (resolve) => {
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+        const fullCanvas = document.createElement('canvas');
+        const fullCtx = fullCanvas.getContext('2d');
+        fullCanvas.width = viewport.width;
+        fullCanvas.height = viewport.height;
+
+        await page.render({ canvasContext: fullCtx, viewport }).promise;
+
+        const halfCanvas = document.createElement('canvas');
+        const halfCtx = halfCanvas.getContext('2d');
+        halfCanvas.width = fullCanvas.width / 2;
+        halfCanvas.height = fullCanvas.height;
+        halfCtx.drawImage(
+          fullCanvas,
+          0, 0, fullCanvas.width / 2, fullCanvas.height,
+          0, 0, halfCanvas.width, halfCanvas.height
+        );
+
+        resolve({ canvas: halfCanvas, pageNum: page.pageNumber });
+      });
+    }
+
+    async function runParallelOCR(file) {
+      textColumn.innerHTML = "<p><strong>Loading PDF...</strong></p>";
+      canvasColumn.innerHTML = "<p><strong>Rendering pages...</strong></p>";
+
+      const reader = new FileReader();
+      reader.onload = async function () {
+        const typedArray = new Uint8Array(this.result);
+        const pdf = await pdfjsLib.getDocument(typedArray).promise;
+
+        textColumn.innerHTML = "";
+        canvasColumn.innerHTML = "";
+
+        const pagePromises = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          pagePromises.push(pdf.getPage(i));
+        }
+
+        const workers = await Promise.all(
+          Array.from({ length: NUM_WORKERS }, () => createOCRWorker())
+        );
+
+        const renderedPages = await Promise.all((await Promise.all(pagePromises)).map(renderLeftHalf));
+
+        const ocrJobs = renderedPages.map((pageObj, index) => {
+          const worker = workers[index % workers.length];
+          return worker.recognize(pageObj.canvas).then(result => ({
+            pageNum: pageObj.pageNum,
+            canvas: pageObj.canvas,
+            text: result.data.text || '[No text recognized]'
+          }));
+        });
+
+        const results = await Promise.all(ocrJobs);
+        results.sort((a, b) => a.pageNum - b.pageNum);
+
+        results.forEach(res => {
+          canvasColumn.appendChild(res.canvas);
+          const pre = document.createElement('pre');
+          pre.textContent = res.text;
+          textColumn.appendChild(pre);
+        });
+
+        textColumn.insertAdjacentHTML('beforeend', '<p><strong>✅ OCR complete (left column only).</strong></p>');
+
+        for (const w of workers) await w.terminate();
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file && file.type === "application/pdf") {
+        runParallelOCR(file);
+      } else {
+        alert("Please select a valid PDF.");
+      }
+    });
+
+    // Drag and drop support
+    document.body.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      document.body.classList.add('drop-zone-active');
+    });
+
+    document.body.addEventListener('dragleave', () => {
+      document.body.classList.remove('drop-zone-active');
+    });
+
+    document.body.addEventListener('drop', (e) => {
+      e.preventDefault();
+      document.body.classList.remove('drop-zone-active');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === "application/pdf") {
+        fileInput.files = e.dataTransfer.files;
+        runParallelOCR(file);
+      } else {
+        alert("Please drop a PDF file.");
+      }
+    });
+  </script>
+</body>
+</html>
