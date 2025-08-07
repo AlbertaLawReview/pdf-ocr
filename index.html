@@ -125,7 +125,7 @@
           textColumn.appendChild(pre);
         });
 
-        textColumn.insertAdjacentHTML('beforeend', '<p><strong>✅ OCR complete.</strong></p>');
+        textColumn.insertAdjacentHTML('beforeend', '<p><strong>✅ OCR complete (left column only).</strong></p>');
 
         for (const w of workers) await w.terminate();
       };
